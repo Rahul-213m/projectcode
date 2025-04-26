@@ -1,0 +1,124 @@
+import numpy as np
+import tensorflow as tf
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import classification_report
+
+# Generate synthetic harmonic data with noise
+def generate_harmonic_data(num_samples, seq_length=100, min_high_pf=0.985, max_low_pf=0.6):
+    time_vector = np.linspace(0, 50, 5000)
+    voltage_signal_base = np.sin(time_vector)
+    X = []
+    y = []
+
+    for _ in range(num_samples):
+        idx = np.random.randint(0, len(voltage_signal_base) - seq_length)
+        voltage_segment = voltage_signal_base[idx:idx + seq_length]
+        # Add small Gaussian noise to voltage
+        voltage_segment += np.random.normal(0, 0.01, seq_length)
+
+        if np.random.rand() > 0.5:
+            # High PF (label 1)
+            max_phase_diff = np.arccos(min_high_pf)
+            phase_shift = np.random.uniform(-max_phase_diff, max_phase_diff)
+            y.append(1)
+        else:
+            # Low PF (label 0)
+            min_phase_diff = np.arccos(max_low_pf)
+            phase_shift = np.random.uniform(min_phase_diff, np.pi / 2)
+            y.append(0)
+
+        current_signal_base = np.sin(time_vector + phase_shift)
+        current_segment = current_signal_base[idx:idx + seq_length]
+        # Add small Gaussian noise to current
+        current_segment += np.random.normal(0, 0.01, seq_length)
+        X.append(np.array([voltage_segment, current_segment]).T)
+
+    return np.array(X), np.array(y)
+
+# Power factor check (optional debug)
+def calculate_power_factor(voltage_signal, current_signal):
+    voltage_fft = np.fft.fft(voltage_signal)
+    current_fft = np.fft.fft(current_signal)
+    voltage_phase = np.angle(voltage_fft[1])
+    current_phase = np.angle(current_fft[1])
+    return np.cos(voltage_phase - current_phase)
+
+# Generate and scale data
+num_samples = 15000  # Increased samples
+seq_length = 100
+X, y = generate_harmonic_data(num_samples=num_samples, seq_length=seq_length)
+
+# Normalize
+scaler = MinMaxScaler()
+X = X.reshape(X.shape[0], -1)
+X = scaler.fit_transform(X)
+X = X.reshape(-1, seq_length, 2)
+
+# Split dataset
+X_train, X_test, y_train, y_test = train_test_split(X, y, stratify=y, test_size=0.2, random_state=42)
+
+# Build model
+model = tf.keras.Sequential([
+    tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(256, return_sequences=True), input_shape=(seq_length, 2)),
+    tf.keras.layers.BatchNormalization(),
+    tf.keras.layers.Dropout(0.3),  # Reduced dropout
+    tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128)),
+    tf.keras.layers.BatchNormalization(),
+    tf.keras.layers.Dropout(0.3),
+    tf.keras.layers.Dense(64, activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.01)),
+    tf.keras.layers.BatchNormalization(),
+    tf.keras.layers.Dense(1, activation='sigmoid')
+])
+
+# Learning rate scheduler
+def scheduler(epoch, lr):
+    if epoch < 10:
+        return lr
+    else:
+        return lr * tf.math.exp(-0.1)
+
+# Compile model
+optimizer = tf.keras.optimizers.Adam(learning_rate=0.0005)  # Reduced learning rate
+model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['accuracy'])
+
+# Callbacks
+early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+lr_scheduler = tf.keras.callbacks.LearningRateScheduler(scheduler)
+
+# Train model
+history = model.fit(
+    X_train, y_train,
+    epochs=100,  # Increased epochs
+    batch_size=64,  # Increased batch size
+    validation_data=(X_test, y_test),
+    callbacks=[early_stopping, lr_scheduler],
+    verbose=1
+)
+
+# Evaluate
+loss, accuracy = model.evaluate(X_test, y_test)
+print(f"\n✅ Test Accuracy: {accuracy:.4f}")
+print(f"📉 Test Loss: {loss:.4f}")
+
+# Prediction and report
+y_pred = (model.predict(X_test) > 0.5).astype(int).flatten()
+print("\n📊 Classification Report:")
+print(classification_report(y_test, y_pred, target_names=["Low PF", "High PF"]))
+
+# Plot results
+plt.figure(figsize=(12, 5))
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'], label='Train Acc')
+plt.plot(history.history['val_accuracy'], label='Val Acc')
+plt.title("Accuracy")
+plt.legend()
+
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'], label='Train Loss')
+plt.plot(history.history['val_loss'], label='Val Loss')
+plt.title("Loss")
+plt.legend()
+plt.tight_layout()
+plt.show()
