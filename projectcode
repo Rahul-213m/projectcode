@@ -5,6 +5,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import classification_report
 
+# Ensure reproducibility
+np.random.seed(42)
+tf.random.set_seed(42)
+
 # Generate synthetic harmonic data with noise
 def generate_harmonic_data(num_samples, seq_length=100, min_high_pf=0.985, max_low_pf=0.6):
     time_vector = np.linspace(0, 50, 5000)
@@ -46,7 +50,7 @@ def calculate_power_factor(voltage_signal, current_signal):
     return np.cos(voltage_phase - current_phase)
 
 # Generate and scale data
-num_samples = 15000  # Increased samples
+num_samples = 15000
 seq_length = 100
 X, y = generate_harmonic_data(num_samples=num_samples, seq_length=seq_length)
 
@@ -63,7 +67,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, stratify=y, test_size=
 model = tf.keras.Sequential([
     tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(256, return_sequences=True), input_shape=(seq_length, 2)),
     tf.keras.layers.BatchNormalization(),
-    tf.keras.layers.Dropout(0.3),  # Reduced dropout
+    tf.keras.layers.Dropout(0.3),
     tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128)),
     tf.keras.layers.BatchNormalization(),
     tf.keras.layers.Dropout(0.3),
@@ -77,10 +81,10 @@ def scheduler(epoch, lr):
     if epoch < 10:
         return lr
     else:
-        return lr * tf.math.exp(-0.1)
+        return lr * np.exp(-0.1)  # Simplified to avoid TensorFlow tensor issues
 
 # Compile model
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.0005)  # Reduced learning rate
+optimizer = tf.keras.optimizers.Adam(learning_rate=0.0005)
 model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['accuracy'])
 
 # Callbacks
@@ -90,8 +94,8 @@ lr_scheduler = tf.keras.callbacks.LearningRateScheduler(scheduler)
 # Train model
 history = model.fit(
     X_train, y_train,
-    epochs=100,  # Increased epochs
-    batch_size=64,  # Increased batch size
+    epochs=100,
+    batch_size=64,
     validation_data=(X_test, y_test),
     callbacks=[early_stopping, lr_scheduler],
     verbose=1
@@ -121,4 +125,8 @@ plt.plot(history.history['val_loss'], label='Val Loss')
 plt.title("Loss")
 plt.legend()
 plt.tight_layout()
-plt.show()
+
+# Save the plot to a file to avoid display issues in non-interactive environments
+plt.savefig('training_plot.png')
+plt.close()  # Close the plot to free memory
+print("📈 Plot saved as 'training_plot.png'")
